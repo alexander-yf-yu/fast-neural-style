@@ -1,10 +1,11 @@
-FROM python:3.6
+FROM python:3.8
 
+# Copy project files
 COPY . /app
-
 WORKDIR /app
 
-RUN pip install -r requirements.txt && ./download_styling_models.sh
+# Install dependencies
+RUN pip install --upgrade pip && pip install -r requirements.txt && ./download_styling_models.sh
 
 WORKDIR /data
 

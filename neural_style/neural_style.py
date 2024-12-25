@@ -127,19 +127,32 @@ def check_paths(args):
 
 
 def stylize(args):
+    print("stylize begin")
     content_image = utils.tensor_load_rgbimage(args.content_image, scale=args.content_scale)
+    print("stylize unsqueeze")
     content_image = content_image.unsqueeze(0)
 
     if args.cuda:
         content_image = content_image.cuda()
+    print("stylize variable")
     content_image = Variable(utils.preprocess_batch(content_image), volatile=True)
+    print("stylize transformernet")
     style_model = TransformerNet()
+    print("stylize load state dict")
     style_model.load_state_dict(torch.load(args.model))
 
     if args.cuda:
         style_model.cuda()
 
-    output = style_model(content_image)
+    print("stylize style model")
+    try:
+        print("Starting forward pass")
+        output = style_model(content_image)
+        print("Forward pass completed")
+    except Exception as e:
+        print("Error during model forward pass:", e)
+
+    print("style model output: ", output)
     utils.tensor_save_bgrimage(output.data[0], args.output_image, args.cuda)
 
 
