@@ -171,7 +171,9 @@ def stylize(args):
         with_stack=True
     ) as prof:
         with record_function("style_model_forward_pass"):
-            output = style_model(content_image)
+            with torch.no_grad():
+                with torch.cuda.amp.autocast():
+                    output = style_model(content_image)
     forward_pass_time = time.time() - start
     print(f"stylize forward pass took {forward_pass_time:.4f} seconds")
     print("Profiling completed. Check the logs in './log'")

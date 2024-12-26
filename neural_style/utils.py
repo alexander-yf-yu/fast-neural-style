@@ -22,9 +22,9 @@ def tensor_load_rgbimage(filename, size=None, scale=None):
 
 def tensor_save_rgbimage(tensor, filename, cuda=False):
     if cuda:
-        img = tensor.clone().cpu().clamp(0, 255).numpy()
+        img = tensor.clone().detach().cpu().float().clamp(0, 255).numpy()
     else:
-        img = tensor.clone().clamp(0, 255).numpy()
+        img = tensor.clone().detach().float().clamp(0, 255).numpy()
     img = img.transpose(1, 2, 0).astype('uint8')
     img = Image.fromarray(img)
     print("tensor_save_rgbimage", img)
