@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y \
     libopenblas-dev \
     liblapack-dev \
     gfortran \
+    gnupg2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Upgrade pip
@@ -25,15 +26,34 @@ RUN python3 -m pip install --upgrade pip
 COPY . /app
 WORKDIR /app
 
-# Install project dependencies and download styling models
-RUN pip install -r requirements.txt
-RUN chmod +x ./download_styling_models.sh && ./download_styling_models.sh
+# Install project dependencies from requirements.txt
+RUN pip install -r requirements.txt || \
+    (wget -qO - https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/3bf863cc.pub | apt-key add - && \
+    echo "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/ /" > /etc/apt/sources.list.d/nvidia-tensorrt.list && \
+    apt-get update && apt-get install -y \
+    libnvinfer8 \
+    libnvinfer-dev \
+    libnvinfer-plugin8 \
+    python3-libnvinfer)
 
-# Ensure CUDA compatibility with PyTorch
-RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# Install pinned PyTorch, TorchVision, TorchAudio, Torch-TensorRT for CUDA 11.8
+RUN pip install \
+    torch==2.0.1+cu118 \
+    torchvision==0.15.2+cu118 \
+    # torchaudio==2.0.1+cu118 \
+    --index-url https://download.pytorch.org/whl/cu118
+
+RUN pip install torch-tensorrt==1.4.0 \
+    -f https://github.com/NVIDIA/Torch-TensorRT/releases
+
+
+# Download styling models
+RUN chmod +x ./download_styling_models.sh && ./download_styling_models.sh
 
 # Set the working directory for input/output
 WORKDIR /data
 
 # Set the container's entry point
 ENTRYPOINT ["python3", "/app/neural_style/neural_style.py"]
+

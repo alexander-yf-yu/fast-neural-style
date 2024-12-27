@@ -1,4 +1,5 @@
 import argparse
+import torch_tensorrt
 import os
 import sys
 import time
@@ -15,6 +16,8 @@ from torchvision import transforms
 import utils
 from transformer_net import TransformerNet
 from vgg16 import Vgg16
+
+IMG_SIZE=1024
 
 
 def train(args):
@@ -128,11 +131,13 @@ def check_paths(args):
 
 
 
+
 def stylize(args):
     total_start = time.time()  # Start total timing
 
+    # Load content image
     start = time.time()
-    content_image = utils.tensor_load_rgbimage(args.content_image, scale=args.content_scale)
+    content_image = utils.tensor_load_rgbimage(args.content_image, size=IMG_SIZE)
     print(f"stylize tensor_load_rgbimage took {time.time() - start:.4f} seconds")
 
     start = time.time()
@@ -144,11 +149,13 @@ def stylize(args):
         content_image = content_image.cuda()
         print(f"stylize cuda transfer took {time.time() - start:.4f} seconds")
 
+    # Preprocess image
     start = time.time()
     with torch.no_grad():
         content_image = Variable(utils.preprocess_batch(content_image))
         print(f"stylize preprocess_batch took {time.time() - start:.4f} seconds")
 
+    # Load and initialize the model
     start = time.time()
     style_model = TransformerNet()
     print(f"stylize TransformerNet initialization took {time.time() - start:.4f} seconds")
@@ -162,7 +169,20 @@ def stylize(args):
         style_model.cuda()
         print(f"stylize style_model.cuda() took {time.time() - start:.4f} seconds")
 
-    print("Profiling the style model forward pass...")
+    style_model.eval()
+
+    # Compile the model with Torch-TensorRT
+    print("Compiling the model with Torch-TensorRT...")
+    start = time.time()
+    trt_ts_module = torch_tensorrt.compile(
+        style_model,
+        inputs=[torch_tensorrt.Input(content_image.shape)],  # Use the input shape dynamically
+        enabled_precisions={torch.half},  # Enable FP16
+    )
+    print(f"Model compilation with Torch-TensorRT took {time.time() - start:.4f} seconds")
+
+    # Run the optimized model
+    print("Profiling the optimized model forward pass...")
     start = time.time()
     with profile(
         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
@@ -170,15 +190,16 @@ def stylize(args):
         record_shapes=True,
         with_stack=True
     ) as prof:
-        with record_function("style_model_forward_pass"):
+        with record_function("optimized_style_model_forward_pass"):
             with torch.no_grad():
                 with torch.cuda.amp.autocast():
-                    output = style_model(content_image)
+                    output = trt_ts_module(content_image)
     forward_pass_time = time.time() - start
-    print(f"stylize forward pass took {forward_pass_time:.4f} seconds")
+    print(f"Optimized model forward pass took {forward_pass_time:.4f} seconds")
     print("Profiling completed. Check the logs in './log'")
     print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
 
+    # Save the output image
     print("stylize tensor_save_bgrimage")
     start = time.time()
     utils.tensor_save_bgrimage(output.data[0], args.output_image, args.cuda)
