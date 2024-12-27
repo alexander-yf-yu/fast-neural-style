@@ -5,6 +5,7 @@ import time
 
 import numpy as np
 import torch
+from torch.profiler import profile, record_function, ProfilerActivity
 from torch.autograd import Variable
 from torch.optim import Adam
 from torch.utils.data import DataLoader
@@ -126,34 +127,66 @@ def check_paths(args):
         sys.exit(1)
 
 
+
 def stylize(args):
-    print("stylize begin")
+    total_start = time.time()  # Start total timing
+
+    start = time.time()
     content_image = utils.tensor_load_rgbimage(args.content_image, scale=args.content_scale)
-    print("stylize unsqueeze")
+    print(f"stylize tensor_load_rgbimage took {time.time() - start:.4f} seconds")
+
+    start = time.time()
     content_image = content_image.unsqueeze(0)
+    print(f"stylize unsqueeze took {time.time() - start:.4f} seconds")
 
     if args.cuda:
+        start = time.time()
         content_image = content_image.cuda()
-    print("stylize variable")
-    content_image = Variable(utils.preprocess_batch(content_image), volatile=True)
-    print("stylize transformernet")
+        print(f"stylize cuda transfer took {time.time() - start:.4f} seconds")
+
+    start = time.time()
+    with torch.no_grad():
+        content_image = Variable(utils.preprocess_batch(content_image))
+        print(f"stylize preprocess_batch took {time.time() - start:.4f} seconds")
+
+    start = time.time()
     style_model = TransformerNet()
-    print("stylize load state dict")
+    print(f"stylize TransformerNet initialization took {time.time() - start:.4f} seconds")
+
+    start = time.time()
     style_model.load_state_dict(torch.load(args.model))
+    print(f"stylize load_state_dict took {time.time() - start:.4f} seconds")
 
     if args.cuda:
+        start = time.time()
         style_model.cuda()
+        print(f"stylize style_model.cuda() took {time.time() - start:.4f} seconds")
 
-    print("stylize style model")
-    try:
-        print("Starting forward pass")
-        output = style_model(content_image)
-        print("Forward pass completed")
-    except Exception as e:
-        print("Error during model forward pass:", e)
+    style_model.eval()
+    
+    print("Profiling the style model forward pass...")
+    start = time.time()
+    with profile(
+        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+        on_trace_ready=torch.profiler.tensorboard_trace_handler("./log"),
+        record_shapes=True,
+        with_stack=True
+    ) as prof:
+        with record_function("style_model_forward_pass"):
+            with torch.no_grad():
+                output = style_model(content_image)
+    forward_pass_time = time.time() - start
+    print(f"stylize forward pass took {forward_pass_time:.4f} seconds")
+    print("Profiling completed. Check the logs in './log'")
+    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
 
-    print("style model output: ", output)
+    print("stylize tensor_save_bgrimage")
+    start = time.time()
     utils.tensor_save_bgrimage(output.data[0], args.output_image, args.cuda)
+    print(f"stylize tensor_save_bgrimage took {time.time() - start:.4f} seconds")
+
+    total_time = time.time() - total_start
+    print(f"Total stylize function execution took {total_time:.4f} seconds")
 
 
 def main():
