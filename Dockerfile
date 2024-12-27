@@ -1,5 +1,5 @@
 # Use an NVIDIA CUDA base image with Python 3 and CUDA runtime
-FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04
+FROM nvcr.io/nvidia/tensorrt:23.02-py3
 
 # Install system dependencies and essential tools
 RUN apt-get update && apt-get install -y \
