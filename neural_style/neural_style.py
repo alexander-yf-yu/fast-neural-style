@@ -17,6 +17,109 @@ from transformer_net import TransformerNet
 from vgg16 import Vgg16
 
 
+def perceptual_loss(student_output, teacher_output):
+    vgg = Vgg16().eval().cuda()
+    student_features = vgg(student_output)
+    teacher_features = vgg(teacher_output)
+    loss = 0
+    for sf, tf in zip(student_features, teacher_features):
+        loss += torch.nn.functional.mse_loss(sf, tf)
+    return loss
+
+def train_student(args):
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+
+    if args.cuda:
+        torch.cuda.manual_seed(args.seed)
+        kwargs = {'num_workers': 0, 'pin_memory': False}
+    else:
+        kwargs = {}
+
+    # Dataset setup
+    transform = transforms.Compose([
+        transforms.Scale(args.image_size),
+        transforms.CenterCrop(args.image_size),
+        transforms.ToTensor(),
+        transforms.Lambda(lambda x: x.mul(255))
+    ])
+    train_dataset = datasets.ImageFolder(args.dataset, transform)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, **kwargs)
+
+    # Load teacher model
+    teacher_model = TransformerNet()
+    teacher_model.load_state_dict(torch.load(args.teacher_model))
+    teacher_model.eval()
+
+    # Create student model
+    student_model = StudentTransformerNet()
+    optimizer = Adam(student_model.parameters(), args.lr)
+    mse_loss = torch.nn.MSELoss()
+
+    # Load VGG for perceptual loss (optional)
+    vgg = Vgg16()
+    utils.init_vgg16(args.vgg_model_dir)
+    vgg.load_state_dict(torch.load(os.path.join(args.vgg_model_dir, "vgg16.weight")))
+    vgg.eval()
+
+    if args.cuda:
+        teacher_model.cuda()
+        student_model.cuda()
+        vgg.cuda()
+
+    for e in range(args.epochs):
+        student_model.train()
+        agg_distillation_loss = 0.0
+        count = 0
+
+        for batch_id, (x, _) in enumerate(train_loader):
+            n_batch = len(x)
+            count += n_batch
+            optimizer.zero_grad()
+
+            x = Variable(utils.preprocess_batch(x))
+            if args.cuda:
+                x = x.cuda()
+
+            # Teacher's prediction (frozen)
+            with torch.no_grad():
+                teacher_output = teacher_model(x)
+
+            # Student's prediction
+            student_output = student_model(x)
+
+            # Distillation loss: match student output to teacher output
+            pixel_loss = mse_loss(student_output, teacher_output)
+
+            # Optional: Perceptual loss via VGG
+            teacher_features = vgg(teacher_output)
+            student_features = vgg(student_output)
+            perceptual_loss = sum(mse_loss(sf, tf) for sf, tf in zip(student_features, teacher_features))
+
+            # Total loss
+            total_loss = pixel_loss + args.perceptual_weight * perceptual_loss
+            total_loss.backward()
+            optimizer.step()
+
+            agg_distillation_loss += total_loss.item()
+
+            if (batch_id + 1) % args.log_interval == 0:
+                mesg = "{}\tEpoch {}:\t[{}/{}]\tDistillation Loss: {:.6f}".format(
+                    time.ctime(), e + 1, count, len(train_dataset),
+                    agg_distillation_loss / (batch_id + 1),
+                )
+                print(mesg)
+
+    # Save the student model
+    student_model.eval()
+    student_model.cpu()
+    save_model_filename = "student_epoch_" + str(args.epochs) + "_" + str(time.ctime()).replace(' ', '_') + ".model"
+    save_model_path = os.path.join(args.save_model_dir, save_model_filename)
+    torch.save(student_model.state_dict(), save_model_path)
+
+    print("\nDone, distilled student model saved at", save_model_path)
+
+
 def train(args):
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)

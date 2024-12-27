@@ -3,6 +3,50 @@ import torch.nn as nn
 import numpy as np
 
 
+class StudentTransformerNet(torch.nn.Module):
+    def __init__(self):
+        super(StudentTransformerNet, self).__init__()
+
+        # Initial convolution layers
+        # Reduced number of filters for efficiency
+        self.conv1 = ConvLayer(3, 16, kernel_size=9, stride=1)
+        self.in1 = InstanceNormalization(16)
+        self.conv2 = ConvLayer(16, 32, kernel_size=3, stride=2)
+        self.in2 = InstanceNormalization(32)
+        self.conv3 = ConvLayer(32, 64, kernel_size=3, stride=2)
+        self.in3 = InstanceNormalization(64)
+
+        # Residual layers
+        # Reduced number of residual blocks
+        self.res1 = ResidualBlock(64)
+        self.res2 = ResidualBlock(64)
+        self.res3 = ResidualBlock(64)  # Only 3 residual blocks instead of 5
+
+        # Upsampling Layers
+        # Adjusted to match the downsized feature map dimensions
+        self.deconv1 = UpsampleConvLayer(64, 32, kernel_size=3, stride=1, upsample=2)
+        self.in4 = InstanceNormalization(32)
+        self.deconv2 = UpsampleConvLayer(32, 16, kernel_size=3, stride=1, upsample=2)
+        self.in5 = InstanceNormalization(16)
+        self.deconv3 = ConvLayer(16, 3, kernel_size=9, stride=1)
+
+        # Non-linearities
+        self.relu = nn.ReLU()
+
+    def forward(self, X):
+        in_X = X
+        y = self.relu(self.in1(self.conv1(in_X)))
+        y = self.relu(self.in2(self.conv2(y)))
+        y = self.relu(self.in3(self.conv3(y)))
+        y = self.res1(y)
+        y = self.res2(y)
+        y = self.res3(y)
+        y = self.relu(self.in4(self.deconv1(y)))
+        y = self.relu(self.in5(self.deconv2(y)))
+        y = self.deconv3(y)
+        return y
+
+
 class TransformerNet(torch.nn.Module):
     def __init__(self):
         super(TransformerNet, self).__init__()
