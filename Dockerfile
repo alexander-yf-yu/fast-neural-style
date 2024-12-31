@@ -34,6 +34,3 @@ RUN pip install torch torchvision torchaudio --index-url https://download.pytorc
 
 # Set the working directory for input/output
 WORKDIR /data
-
-# Set the container's entry point
-ENTRYPOINT ["python3", "/app/neural_style/neural_style.py"]
