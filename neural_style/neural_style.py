@@ -17,14 +17,6 @@ from transformer_net import TransformerNet, StudentTransformerNet
 from vgg16 import Vgg16
 
 
-def perceptual_loss(student_output, teacher_output):
-    vgg = Vgg16().eval().cuda()
-    student_features = vgg(student_output)
-    teacher_features = vgg(teacher_output)
-    loss = 0
-    for sf, tf in zip(student_features, teacher_features):
-        loss += torch.nn.functional.mse_loss(sf, tf)
-    return loss
 
 def train_student(args):
     np.random.seed(args.seed)
@@ -58,15 +50,9 @@ def train_student(args):
     optimizer = Adam(student_model.parameters(), args.lr)
     mse_loss = torch.nn.MSELoss()
 
-    # Load VGG for perceptual loss (optional)
-    vgg = Vgg16()
-    utils.init_vgg16(args.vgg_model_dir)
-    vgg.eval()
-
     if args.cuda:
         teacher_model.cuda()
         student_model.cuda()
-        vgg.cuda()
 
     for e in range(args.epochs):
         student_model.train()
@@ -91,18 +77,10 @@ def train_student(args):
 
             # Distillation loss: match student output to teacher output
             pixel_loss = mse_loss(student_output, teacher_output)
-
-            # Optional: Perceptual loss via VGG
-            teacher_features = vgg(teacher_output)
-            student_features = vgg(student_output)
-            perceptual_loss = sum(mse_loss(sf, tf) for sf, tf in zip(student_features, teacher_features))
-
-            # Total loss
-            total_loss = pixel_loss + args.perceptual_weight * perceptual_loss
-            total_loss.backward()
+            pixel_loss.backward()
             optimizer.step()
 
-            agg_distillation_loss += total_loss.item()
+            agg_distillation_loss += pixel_loss.item()
 
             if (batch_id + 1) % args.log_interval == 0:
                 mesg = "{}\tEpoch {}:\t[{}/{}]\tDistillation Loss: {:.6f}".format(
