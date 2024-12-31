@@ -17,7 +17,6 @@ from transformer_net import TransformerNet, StudentTransformerNet
 from vgg16 import Vgg16
 
 
-
 def train_student(args):
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -82,7 +81,7 @@ def train_student(args):
 
             agg_distillation_loss += pixel_loss.item()
 
-            if (batch_id + 1) % args.log_interval == 0:
+            if (batch_id) % args.log_interval == 0:
                 mesg = "{}\tEpoch {}:\t[{}/{}]\tDistillation Loss: {:.6f}".format(
                     time.ctime(), e + 1, count, len(train_dataset),
                     agg_distillation_loss / (batch_id + 1),
@@ -214,23 +213,33 @@ def check_paths(args):
 def stylize(args):
     total_start = time.time()  # Start total timing
 
+    # Load and preprocess all images into a batch tensor
     start = time.time()
-    content_image = utils.tensor_load_rgbimage(args.content_image, scale=args.content_scale)
-    print(f"stylize tensor_load_rgbimage took {time.time() - start:.4f} seconds")
-
-    start = time.time()
-    content_image = content_image.unsqueeze(0)
-    print(f"stylize unsqueeze took {time.time() - start:.4f} seconds")
+    batch_images = []
+    input_image_names = []
+    for content_image_path in args.content_images:  # args.content_images should be a list of paths
+        if len(args.content_images) > 1:
+            # resize so tensors can be combined
+            content_image = utils.tensor_load_rgbimage(content_image_path, size=args.image_size)
+        else:
+            content_image = utils.tensor_load_rgbimage(content_image_path, scale=args.content_scale)
+        content_image = content_image.unsqueeze(0)
+        if args.cuda:
+            content_image = content_image.cuda()
+        batch_images.append(content_image)
+        input_image_names.append(os.path.basename(content_image_path))
+    batch_images = torch.cat(batch_images, dim=0)  # Combine into a single batch tensor
+    print(f"Batch loading took {time.time() - start:.4f} seconds")
 
     if args.cuda:
         start = time.time()
-        content_image = content_image.cuda()
+        batch_images = batch_images.cuda()
         print(f"stylize cuda transfer took {time.time() - start:.4f} seconds")
 
+    # Preprocess the batch
     start = time.time()
-    with torch.no_grad():
-        content_image = Variable(utils.preprocess_batch(content_image))
-        print(f"stylize preprocess_batch took {time.time() - start:.4f} seconds")
+    batch_images = Variable(utils.preprocess_batch(batch_images))  # Apply preprocess_batch here
+    print(f"Batch preprocessing took {time.time() - start:.4f} seconds")
 
     start = time.time()
     if args.model_type:
@@ -249,7 +258,8 @@ def stylize(args):
         style_model.cuda()
         print(f"stylize style_model.cuda() took {time.time() - start:.4f} seconds")
 
-    print("Profiling the style model forward pass...")
+    # Run the model on the batch
+    print("Profiling the style model forward pass on batch...")
     start = time.time()
     with profile(
         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
@@ -260,16 +270,24 @@ def stylize(args):
         with record_function("style_model_forward_pass"):
             with torch.no_grad():
                 with torch.cuda.amp.autocast():
-                    output = style_model(content_image)
+                    output_batch = style_model(batch_images)
     forward_pass_time = time.time() - start
-    print(f"stylize forward pass took {forward_pass_time:.4f} seconds")
+    print(f"Batch forward pass took {forward_pass_time:.4f} seconds")
     print("Profiling completed. Check the logs in './log'")
     print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
 
-    print("stylize tensor_save_bgrimage")
+    # Ensure the output directory exists
+    output_dir = args.output_dir  # args.output_dir should be the specified directory
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Save the outputs for each image in the batch
+    print("Saving output images...")
     start = time.time()
-    utils.tensor_save_bgrimage(output.data[0], args.output_image, args.cuda)
-    print(f"stylize tensor_save_bgrimage took {time.time() - start:.4f} seconds")
+    for i, output_image in enumerate(output_batch):
+        input_name = os.path.splitext(input_image_names[i])[0]  # Remove file extension
+        output_path = os.path.join(output_dir, f"{input_name}_stylized.jpg")  # Add "_stylized" to the name
+        utils.tensor_save_bgrimage(output_image.data, output_path, args.cuda)
+    print(f"Saving batch output images took {time.time() - start:.4f} seconds")
 
     total_time = time.time() - total_start
     print(f"Total stylize function execution took {total_time:.4f} seconds")
@@ -309,20 +327,23 @@ def main():
     train_arg_parser.add_argument("--log-interval", type=int, default=500,
                                   help="number of images after which the training loss is logged, default is 500")
 
+
     # Parser for evaluation
     eval_arg_parser = subparsers.add_parser("eval", help="parser for evaluation/stylizing arguments")
-    eval_arg_parser.add_argument("--content-image", type=str, required=True,
-                                 help="path to content image you want to stylize")
+    eval_arg_parser.add_argument("--content-images", type=str, nargs="+", required=True,
+                                 help="path(s) to content image(s) you want to stylize. Provide multiple paths for batching.")
     eval_arg_parser.add_argument("--content-scale", type=float, default=None,
-                                 help="factor for scaling down the content image")
-    eval_arg_parser.add_argument("--output-image", type=str, required=True,
-                                 help="path for saving the output image")
+                                 help="factor for scaling down the content image(s)")
+    eval_arg_parser.add_argument("--output-dir", type=str, required=True,
+                                 help="directory for saving the output image(s)")
     eval_arg_parser.add_argument("--model", type=str, required=True,
-                                 help="saved model to be used for stylizing the image")
+                                 help="saved model to be used for stylizing the image(s)")
     eval_arg_parser.add_argument("--cuda", type=int, required=True,
                                  help="set it to 1 for running on GPU, 0 for CPU")
     eval_arg_parser.add_argument("--model-type", type=int, required=True,
                                  help="set it to 0 for teacher, 1 for student")
+    eval_arg_parser.add_argument("--image-size", type=int, default=1024,
+                                  help="size of training images, default is 256 X 256")
 
     # Parser for training the student model (knowledge distillation)
     train_student_arg_parser = subparsers.add_parser("train_student", help="parser for student training arguments")
