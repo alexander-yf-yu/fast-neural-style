@@ -13,7 +13,7 @@ from torchvision import datasets
 from torchvision import transforms
 
 import utils
-from transformer_net import TransformerNet
+from transformer_net import TransformerNet, StudentTransformerNet
 from vgg16 import Vgg16
 
 
@@ -38,12 +38,14 @@ def train_student(args):
 
     # Dataset setup
     transform = transforms.Compose([
-        transforms.Scale(args.image_size),
+        transforms.Resize(args.image_size),
         transforms.CenterCrop(args.image_size),
         transforms.ToTensor(),
         transforms.Lambda(lambda x: x.mul(255))
     ])
     train_dataset = datasets.ImageFolder(args.dataset, transform)
+    max_images = args.max_images if args.max_images else len(train_dataset)
+    train_dataset = torch.utils.data.Subset(train_dataset, range(min(len(train_dataset), max_images)))
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, **kwargs)
 
     # Load teacher model
@@ -59,7 +61,6 @@ def train_student(args):
     # Load VGG for perceptual loss (optional)
     vgg = Vgg16()
     utils.init_vgg16(args.vgg_model_dir)
-    vgg.load_state_dict(torch.load(os.path.join(args.vgg_model_dir, "vgg16.weight")))
     vgg.eval()
 
     if args.cuda:
@@ -113,7 +114,7 @@ def train_student(args):
     # Save the student model
     student_model.eval()
     student_model.cpu()
-    save_model_filename = "student_epoch_" + str(args.epochs) + "_" + str(time.ctime()).replace(' ', '_') + ".model"
+    save_model_filename = student_model.__class__.__name__ + "_epoch_" + str(args.epochs) + "_" + str(time.ctime()).replace(' ', '_').replace(':', '_') + "_" + str(args.max_images) + ".model"
     save_model_path = os.path.join(args.save_model_dir, save_model_filename)
     torch.save(student_model.state_dict(), save_model_path)
 
@@ -130,11 +131,13 @@ def train(args):
     else:
         kwargs = {}
 
-    transform = transforms.Compose([transforms.Scale(args.image_size),
+    transform = transforms.Compose([transforms.Resize(args.image_size),
                                     transforms.CenterCrop(args.image_size),
                                     transforms.ToTensor(),
                                     transforms.Lambda(lambda x: x.mul(255))])
     train_dataset = datasets.ImageFolder(args.dataset, transform)
+    max_images = args.max_images if args.max_images else len(train_dataset)
+    train_dataset = torch.utils.data.Subset(train_dataset, range(min(len(train_dataset), max_images)))
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, **kwargs)
 
     transformer = TransformerNet()
@@ -143,7 +146,6 @@ def train(args):
 
     vgg = Vgg16()
     utils.init_vgg16(args.vgg_model_dir)
-    vgg.load_state_dict(torch.load(os.path.join(args.vgg_model_dir, "vgg16.weight")))
 
     if args.cuda:
         transformer.cuda()
@@ -211,7 +213,7 @@ def train(args):
     # save model
     transformer.eval()
     transformer.cpu()
-    save_model_filename = "epoch_" + str(args.epochs) + "_" + str(time.ctime()).replace(' ', '_') + "_" + str(
+    save_model_filename = "epoch_" + str(args.epochs) + "_" + str(time.ctime()).replace(' ', '_').replace(':', '_') + "_" + str(
         args.content_weight) + "_" + str(args.style_weight) + ".model"
     save_model_path = os.path.join(args.save_model_dir, save_model_filename)
     torch.save(transformer.state_dict(), save_model_path)
@@ -253,8 +255,12 @@ def stylize(args):
         print(f"stylize preprocess_batch took {time.time() - start:.4f} seconds")
 
     start = time.time()
-    style_model = TransformerNet()
-    print(f"stylize TransformerNet initialization took {time.time() - start:.4f} seconds")
+    if args.model_type:
+        style_model = StudentTransformerNet()
+        print(f"stylize StudentTransformerNet initialization took {time.time() - start:.4f} seconds")
+    else:
+        style_model = TransformerNet()
+        print(f"stylize TransformerNet initialization took {time.time() - start:.4f} seconds")
 
     start = time.time()
     style_model.load_state_dict(torch.load(args.model))
@@ -295,8 +301,8 @@ def main():
     main_arg_parser = argparse.ArgumentParser(description="parser for fast-neural-style")
     subparsers = main_arg_parser.add_subparsers(title="subcommands", dest="subcommand")
 
-    train_arg_parser = subparsers.add_parser("train",
-                                             help="parser for training arguments")
+    # Parser for training the teacher model
+    train_arg_parser = subparsers.add_parser("train", help="parser for training arguments")
     train_arg_parser.add_argument("--epochs", type=int, default=2,
                                   help="number of training epochs, default is 2")
     train_arg_parser.add_argument("--batch-size", type=int, default=4,
@@ -325,6 +331,7 @@ def main():
     train_arg_parser.add_argument("--log-interval", type=int, default=500,
                                   help="number of images after which the training loss is logged, default is 500")
 
+    # Parser for evaluation
     eval_arg_parser = subparsers.add_parser("eval", help="parser for evaluation/stylizing arguments")
     eval_arg_parser.add_argument("--content-image", type=str, required=True,
                                  help="path to content image you want to stylize")
@@ -336,11 +343,42 @@ def main():
                                  help="saved model to be used for stylizing the image")
     eval_arg_parser.add_argument("--cuda", type=int, required=True,
                                  help="set it to 1 for running on GPU, 0 for CPU")
+    eval_arg_parser.add_argument("--model-type", type=int, required=True,
+                                 help="set it to 0 for teacher, 1 for student")
+
+    # Parser for training the student model (knowledge distillation)
+    train_student_arg_parser = subparsers.add_parser("train_student", help="parser for student training arguments")
+    train_student_arg_parser.add_argument("--epochs", type=int, default=2,
+                                          help="number of training epochs, default is 2")
+    train_student_arg_parser.add_argument("--batch-size", type=int, default=4,
+                                          help="batch size for training, default is 4")
+    train_student_arg_parser.add_argument("--dataset", type=str, required=True,
+                                          help="path to training dataset, the path should point to a folder "
+                                               "containing another folder with all the training images")
+    train_student_arg_parser.add_argument("--teacher-model", type=str, required=True,
+                                          help="path to the pre-trained teacher model")
+    train_student_arg_parser.add_argument("--vgg-model-dir", type=str, required=True,
+                                          help="directory for vgg, if model is not present in the directory it is downloaded")
+    train_student_arg_parser.add_argument("--save-model-dir", type=str, required=True,
+                                          help="path to folder where trained model will be saved.")
+    train_student_arg_parser.add_argument("--image-size", type=int, default=256,
+                                          help="size of training images, default is 256 X 256")
+    train_student_arg_parser.add_argument("--cuda", type=int, required=True, help="set it to 1 for running on GPU, 0 for CPU")
+    train_student_arg_parser.add_argument("--seed", type=int, default=42, help="random seed for training")
+    train_student_arg_parser.add_argument("--lr", type=float, default=1e-3,
+                                          help="learning rate, default is 0.001")
+    train_student_arg_parser.add_argument("--perceptual-weight", type=float, default=1.0,
+                                          help="weight for perceptual loss, default is 1.0")
+    train_student_arg_parser.add_argument("--log-interval", type=int, default=500,
+                                          help="number of images after which the training loss is logged, default is 500")
+    train_student_arg_parser.add_argument("--max-images", type=int, default=None,
+                                      help="Maximum number of training images for testing, default is None.")
+
 
     args = main_arg_parser.parse_args()
 
     if args.subcommand is None:
-        print("ERROR: specify either train or eval")
+        print("ERROR: specify either train, eval, or train_student")
         sys.exit(1)
 
     if args.cuda and not torch.cuda.is_available():
@@ -350,6 +388,8 @@ def main():
     if args.subcommand == "train":
         check_paths(args)
         train(args)
+    elif args.subcommand == "train_student":
+        train_student(args)
     else:
         stylize(args)
 
