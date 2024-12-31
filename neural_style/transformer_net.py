@@ -3,6 +3,42 @@ import torch.nn as nn
 import numpy as np
 
 
+class SmallerStudentTransformerNet(torch.nn.Module):
+    def __init__(self):
+        super(SmallerStudentTransformerNet, self).__init__()
+
+        self.conv1 = ConvLayer(3, 8, kernel_size=7, stride=1)
+        self.in1 = InstanceNormalization(8)
+        self.conv2 = ConvLayer(8, 16, kernel_size=3, stride=2)
+        self.in2 = InstanceNormalization(16)
+        self.conv3 = ConvLayer(16, 32, kernel_size=3, stride=2)
+        self.in3 = InstanceNormalization(32)
+
+        self.res1 = ResidualBlock(32)
+        self.res2 = ResidualBlock(32)
+
+        self.deconv1 = UpsampleConvLayer(32, 16, kernel_size=3, stride=1, upsample=2)
+        self.in4 = InstanceNormalization(16)
+        self.deconv2 = UpsampleConvLayer(16, 8, kernel_size=3, stride=1, upsample=2)
+        self.in5 = InstanceNormalization(8)
+        self.deconv3 = ConvLayer(8, 3, kernel_size=7, stride=1)
+
+        # Non-linearities
+        self.relu = nn.ReLU()
+
+    def forward(self, X):
+        in_X = X
+        y = self.relu(self.in1(self.conv1(in_X)))
+        y = self.relu(self.in2(self.conv2(y)))
+        y = self.relu(self.in3(self.conv3(y)))
+        y = self.res1(y)
+        y = self.res2(y)
+        y = self.relu(self.in4(self.deconv1(y)))
+        y = self.relu(self.in5(self.deconv2(y)))
+        y = self.deconv3(y)
+        return y
+
+
 class StudentTransformerNet(torch.nn.Module):
     def __init__(self):
         super(StudentTransformerNet, self).__init__()

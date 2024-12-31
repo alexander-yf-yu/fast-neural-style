@@ -14,6 +14,7 @@ from torchvision import transforms
 
 import utils
 from transformer_net import TransformerNet, StudentTransformerNet
+# from transformer_net import TransformerNet, StudentTransformerNet, SmallerStudentTransformerNet
 from vgg16 import Vgg16
 
 
@@ -47,6 +48,7 @@ def train_student(args):
 
     # Create student model
     student_model = StudentTransformerNet()
+    # student_model = SmallerStudentTransformerNet()
     optimizer = Adam(student_model.parameters(), args.lr)
     mse_loss = torch.nn.MSELoss()
 
@@ -236,6 +238,8 @@ def stylize(args):
     if args.model_type:
         style_model = StudentTransformerNet()
         print(f"stylize StudentTransformerNet initialization took {time.time() - start:.4f} seconds")
+        # style_model = SmallerStudentTransformerNet()
+        # print(f"stylize SmallerStudentTransformerNet initialization took {time.time() - start:.4f} seconds")
     else:
         style_model = TransformerNet()
         print(f"stylize TransformerNet initialization took {time.time() - start:.4f} seconds")
