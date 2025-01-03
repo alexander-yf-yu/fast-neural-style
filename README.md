@@ -1,6 +1,6 @@
 # fast-neural-style :city_sunrise: :rocket:
 
-** This code base pulled from https://github.com/abhiskk/fast-neural-style originally **
+**This code base pulled from https://github.com/abhiskk/fast-neural-style originally**
 
 **NOTICE**: This codebase is no longer maintained, please use the codebase from pytorch examples repository available at [pytorch/examples/fast_neural_style](https://github.com/pytorch/examples/tree/master/fast_neural_style).
 
